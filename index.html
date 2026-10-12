@@ -19,12 +19,9 @@ input:focus,select:focus{box-shadow:0 0 0 2px #0f6b5c55;border-color:#0f6b5c}
 .cell:hover{border-color:#cfd8d2;background:#fff}
 select.cell{appearance:none;-webkit-appearance:none}
 .fld{background:#fff;border:1px solid #cfd8d2;border-radius:8px;padding:7px 10px;width:100%}
-@media print{
-  body{background:#fff}
-  .cell{border:0!important;background:transparent!important;padding:2px 0}
-  .card{break-inside:avoid;box-shadow:none!important}
-  @page{margin:14mm}
-}
+.printonly{display:none}
+.rrow{border-bottom:1px solid #e3e8e2}
+@page{size:A4;margin:8mm}
 </style>
 </head>
 <body class="font-sans min-h-screen">
@@ -40,6 +37,8 @@ const save=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){alert(
 
 const MEALS=[['kahvalti','Kahvaltı'],['ogle','Öğle Yemeği'],['aksam','Akşam Yemeği'],['ara','Ara Öğün']];
 const CARDS=[...MEALS,['firin','Fırın Ürünleri'],['direkt','Doğrudan Tüketim']];
+const MEAL_LABEL=Object.fromEntries(MEALS);
+let dMeal='kahvalti';
 const DEF_BASIS={kahvalti:'lunch',ogle:'lunch',aksam:'dinner',ara:'lunch'};
 const RUNITS=['g','ml','adet'];
 const UNITS=['g','kg','ml','L','adet','paket','kutu','dilim'];
@@ -73,7 +72,8 @@ function norm(l){
 function persons(key){const d=getDay();return d.basis[key]==='dinner'?+d.dinner||0:+d.lunch||0}
 function auto(key){
   const d=getDay();
-  if(key==='firin'||key==='direkt') return d[key].map(x=>norm({name:x.name,qty:x.amt,unit:x.unit}));
+  if(key==='firin') return d.firin.map(x=>norm({name:x.name,qty:x.amt,unit:x.unit}));
+  if(key==='direkt') return d.direkt.filter(x=>!MEAL_LABEL[x.meal]).map(x=>norm({name:x.name,qty:x.amt,unit:x.unit}));
   const n=persons(key),map={};
   (d.meals[key]||[]).forEach(id=>{
     const r=recipes.find(r=>r.id===id); if(!r) return;
@@ -82,6 +82,11 @@ function auto(key){
       map[k]=map[k]||{name:i.name,qty:0,unit:i.unit};
       map[k].qty+=(+i.amt||0)*n;
     });
+  });
+  d.direkt.filter(x=>x.meal===key).forEach(x=>{
+    const k=String(x.name).trim().toLowerCase()+'|'+x.unit;
+    map[k]=map[k]||{name:x.name,qty:0,unit:x.unit};
+    map[k].qty+=(+x.amt||0);
   });
   return Object.values(map).map(norm);
 }
@@ -150,15 +155,17 @@ function viewMenu(){
     ${[['firin','Fırın Ürünleri','Ekmek, simit, poğaça…','adet'],['direkt','Doğrudan Tüketim Ürünleri','Meyve suyu, süt…','ml']].map(([k,l,ph,du])=>`
     <div class="card bg-white rounded-2xl p-4 shadow-sm">
       <h3 class="font-extrabold text-lg mb-3">${l}</h3>
-      <div class="flex gap-2 mb-3">
-        <input id="${k}-n" class="fld" placeholder="${ph}">
+      <div class="flex flex-wrap gap-2 mb-1">
+        <input id="${k}-n" class="fld flex-1 min-w-[8rem]" placeholder="${ph}">
         <input id="${k}-a" type="number" min="0" step="any" class="fld !w-24" placeholder="Miktar">
         <select id="${k}-u" class="fld !w-24">${opts(UNITS,du)}</select>
+        ${k==='direkt'?`<select id="direkt-m" class="fld !w-auto" title="Raporda hangi öğünün altında görünsün" onchange="dMeal=this.value">${MEALS.map(([mk,ml])=>`<option value="${mk}" ${dMeal===mk?'selected':''}>${ml}</option>`).join('')}</select>`:''}
         <button class="${btnP}" onclick="addRow('${k}')">Ekle</button>
       </div>
+      ${k==='direkt'?'<p class="text-xs text-ink/50 mb-3">Seçtiğiniz öğünün altında raporda görünür.</p>':'<div class="mb-2"></div>'}
       <ul class="space-y-1">
         ${d[k].map((x,i)=>`<li class="flex items-center justify-between bg-paper rounded-lg px-3 py-1.5 text-sm">
-          <span>${esc(x.name)} <b>${esc(x.amt)} ${esc(x.unit)}</b></span>
+          <span>${esc(x.name)} <b>${esc(x.amt)} ${esc(x.unit)}</b>${x.meal&&MEAL_LABEL[x.meal]?` <span class="text-leaf text-xs font-semibold">· ${esc(MEAL_LABEL[x.meal])}</span>`:''}</span>
           <button onclick="delRow('${k}',${i})" class="text-red-700 font-bold px-1" aria-label="Sil">✕</button></li>`).join('')||'<li class="text-sm text-ink/50">Henüz ürün girilmedi.</li>'}
       </ul>
     </div>`).join('')}
@@ -172,53 +179,67 @@ function delMeal(k,id){const d=getDay();d.meals[k]=d.meals[k].filter(x=>x!==id);
 function addRow(k){
   const n=$('#'+k+'-n').value.trim(),a=parseFloat($('#'+k+'-a').value),u=$('#'+k+'-u').value;
   if(!n||!(a>0)){alert('Ürün adı ve 0\'dan büyük bir miktar girin.');return}
-  getDay()[k].push({name:n,amt:a,unit:u});saveD();render();
+  const item={name:n,amt:a,unit:u};
+  if(k==='direkt'){const m=$('#direkt-m');item.meal=m?m.value:dMeal;dMeal=item.meal}
+  getDay()[k].push(item);saveD();render();
 }
 function delRow(k,i){getDay()[k].splice(i,1);saveD();render()}
 
 /* ---------- Rapor ---------- */
+function reportCard(c){
+  return `
+  <section class="card bg-white rounded-2xl p-4 shadow-sm">
+    <div class="flex items-center justify-between mb-2">
+      <h3 class="font-extrabold text-lg">${c.l} <span class="text-sm font-semibold text-ink/50">${c.rows.length} kalem</span></h3>
+      ${c.edited?`<button onclick="resetCard('${c.k}')" class="noprint text-xs font-semibold text-amber2 underline" title="Menüden yeniden hesapla">Elle düzenlendi · Sıfırla</button>`:''}
+    </div>
+    <div>
+      ${c.rows.map((r,i)=>`
+      <div class="rrow noprint flex items-center gap-1 py-1">
+        <input class="cell flex-1" value="${esc(r.name)}" placeholder="Malzeme" onchange="setLine('${c.k}',${i},'name',this.value)">
+        <input class="cell !w-20 text-right font-bold" type="number" step="any" min="0" value="${r.qty}" onchange="setLine('${c.k}',${i},'qty',this.value)">
+        <select class="cell !w-16" onchange="setLine('${c.k}',${i},'unit',this.value)">${opts(UNITS.includes(r.unit)?UNITS:[...UNITS,r.unit],r.unit)}</select>
+        <button onclick="delLine('${c.k}',${i})" class="text-red-700 font-bold px-1" aria-label="Satırı sil">✕</button>
+      </div>
+      <div class="rrow printonly"><span>${esc(r.name)||'—'}</span><b style="white-space:nowrap">${esc(r.qty)} ${esc(r.unit)}</b></div>`).join('')||'<div class="py-3 text-sm text-ink/50">Bu kategoride kayıt yok.</div>'}
+    </div>
+    <button onclick="addLine('${c.k}')" class="noprint mt-2 text-sm font-semibold text-leaf hover:underline">+ Satır ekle</button>
+  </section>`;
+}
 function viewReport(){
   const d=getDay();
   const data=CARDS.map(([k,l])=>({k,l,rows:lines(k),edited:!!d.report[k]}));
   const total=data.reduce((s,c)=>s+c.rows.length,0);
   const active=data.filter(c=>c.rows.length).length;
   const visible=data.filter(c=>c.k!=='direkt'||c.rows.length||c.edited);
+  /* sıra korunarak iki sütuna dengeli bölme */
+  const w=visible.map(c=>c.rows.length+3), sum=w.reduce((a,b)=>a+b,0);
+  let split=1,best=1e9,acc=0;
+  w.forEach((x,i)=>{acc+=x;const diff=Math.abs(acc-(sum-acc));if(diff<best){best=diff;split=i+1}});
+  const left=visible.slice(0,split), right=visible.slice(split);
   return `
-  <div class="flex flex-wrap items-start justify-between gap-4 mb-5 border-b-2 border-ink pb-4">
+  <div id="report">
+  <div class="rh flex flex-wrap items-start justify-between gap-4 mb-5 border-b-2 border-ink pb-4">
     <div>
       <div class="text-xs font-bold tracking-widest text-leaf">GÜNLÜK RAPOR</div>
       <h1 class="text-3xl sm:text-4xl font-extrabold leading-tight">Günlük Tüketim Raporu</h1>
-      <div class="text-sm text-ink/70 mt-1">Öğle: <b>${d.lunch||0}</b> kişi · Akşam: <b>${d.dinner||0}</b> kişi</div>
+      <div class="rd text-sm text-ink/70 mt-1">Öğle: <b>${d.lunch||0}</b> kişi · Akşam: <b>${d.dinner||0}</b> kişi</div>
     </div>
     <div class="sm:text-right">
-      <div class="text-lg font-bold">${fmtDate(date)}</div>
+      <div class="rd text-lg font-bold">${fmtDate(date)}</div>
       <div class="flex sm:justify-end gap-2 mt-2">
-        <span class="rounded-full bg-leaf text-white text-xs font-semibold px-3 py-1">Toplam ${total} kayıt</span>
-        <span class="rounded-full bg-sand text-xs font-semibold px-3 py-1">${active} aktif kategori</span>
+        <span class="pill rounded-full bg-leaf text-white text-xs font-semibold px-3 py-1">Toplam ${total} kayıt</span>
+        <span class="pill rounded-full bg-sand text-xs font-semibold px-3 py-1">${active} aktif kategori</span>
       </div>
-      <button onclick="window.print()" class="${btnP} mt-3 print:hidden">Yazdır / PDF indir</button>
+      <button onclick="window.print()" class="${btnP} mt-3 noprint">Yazdır / PDF indir (tek sayfa)</button>
     </div>
   </div>
   ${menuSummary()}
-  <p class="print:hidden text-sm text-ink/60 mb-4">Miktarlar otomatik hesaplanır. Ad, miktar ve birimi doğrudan düzenleyebilir, satır silebilir veya ekleyebilirsiniz.</p>
-  <div class="grid md:grid-cols-2 gap-4">
-    ${visible.map(c=>`
-    <section class="card bg-white rounded-2xl p-4 shadow-sm">
-      <div class="flex items-center justify-between mb-2">
-        <h3 class="font-extrabold text-lg">${c.l} <span class="text-sm font-semibold text-ink/50">${c.rows.length} kalem</span></h3>
-        ${c.edited?`<button onclick="resetCard('${c.k}')" class="print:hidden text-xs font-semibold text-amber2 underline" title="Menüden yeniden hesapla">Elle düzenlendi · Sıfırla</button>`:''}
-      </div>
-      <div class="divide-y divide-sand">
-        ${c.rows.map((r,i)=>`
-        <div class="flex items-center gap-1 py-1">
-          <input class="cell flex-1" value="${esc(r.name)}" placeholder="Malzeme" onchange="setLine('${c.k}',${i},'name',this.value)">
-          <input class="cell !w-20 text-right font-bold" type="number" step="any" min="0" value="${r.qty}" onchange="setLine('${c.k}',${i},'qty',this.value)">
-          <select class="cell !w-16" onchange="setLine('${c.k}',${i},'unit',this.value)">${opts(UNITS.includes(r.unit)?UNITS:[...UNITS,r.unit],r.unit)}</select>
-          <button onclick="delLine('${c.k}',${i})" class="print:hidden text-red-700 font-bold px-1" aria-label="Satırı sil">✕</button>
-        </div>`).join('')||'<div class="py-3 text-sm text-ink/50">Bu kategoride kayıt yok.</div>'}
-      </div>
-      <button onclick="addLine('${c.k}')" class="print:hidden mt-2 text-sm font-semibold text-leaf hover:underline">+ Satır ekle</button>
-    </section>`).join('')}
+  <p class="noprint text-sm text-ink/60 mb-4">Miktarlar otomatik hesaplanır. Ad, miktar ve birimi doğrudan düzenleyebilir, satır silebilir veya ekleyebilirsiniz. Yazdırırken rapor otomatik olarak tek A4 sayfaya sığdırılır.</p>
+  <div class="cols grid md:grid-cols-2 gap-4 items-start">
+    <div class="col flex flex-col gap-4">${left.map(reportCard).join('')}</div>
+    <div class="col flex flex-col gap-4">${right.map(reportCard).join('')}</div>
+  </div>
   </div>`;
 }
 function menuSummary(){
@@ -228,17 +249,17 @@ function menuSummary(){
     const who=persons(k);
     return `<div class="min-w-0">
       <div class="flex items-baseline justify-between gap-2 mb-1">
-        <span class="text-[11px] font-extrabold tracking-wide uppercase text-leaf">${l.replace(' Yemeği','')}</span>
+        <span class="mt text-[11px] font-extrabold tracking-wide uppercase text-leaf">${l.replace(' Yemeği','')}</span>
         ${k==='ogle'||k==='aksam'?`<span class="text-[10px] text-ink/50">${who} kişi</span>`:''}
       </div>
       <div class="flex flex-wrap gap-1">
-        ${names.length?names.map(n=>`<span class="rounded-full bg-sand border border-[#cfd8d2] px-2 py-0.5 text-xs font-semibold leading-tight">${esc(n)}</span>`).join(''):'<span class="text-xs text-ink/40">—</span>'}
+        ${names.length?names.map(n=>`<span class="badge rounded-full bg-sand border border-[#cfd8d2] px-2 py-0.5 text-xs font-semibold leading-tight">${esc(n)}</span>`).join(''):'<span class="text-xs text-ink/40">—</span>'}
       </div>
     </div>`}).join('');
   return `
-  <section class="card bg-white rounded-2xl px-4 py-3 shadow-sm mb-4 border-l-4 border-leaf">
+  <section class="ms card bg-white rounded-2xl px-4 py-3 shadow-sm mb-4 border-l-4 border-leaf">
     <h2 class="text-sm font-extrabold mb-2">O Gün Çıkan Menü Özeti</h2>
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-3 print:grid-cols-4">${cols}</div>
+    <div class="ms-g grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-3">${cols}</div>
   </section>`;
 }
 function setLine(k,i,f,v){const l=ensure(k);l[i][f]=f==='qty'?Math.max(0,parseFloat(v)||0):v;saveD();render()}
@@ -320,6 +341,51 @@ function delRecipe(id){
   Object.values(days).forEach(d=>MEALS.forEach(([k])=>{d.meals[k]=(d.meals[k]||[]).filter(x=>x!==id)}));
   saveR();saveD();render();
 }
+/* ---------- Yazdırma: tek A4 sayfaya sığdır ---------- */
+(function(){
+  const R=P=>`
+  ${P}{background:#fff}
+  ${P} #app{max-width:none;padding:0}
+  ${P} header,${P} .noprint{display:none!important}
+  ${P} .printonly{display:flex!important;justify-content:space-between;gap:6px}
+  ${P} #report .rh{margin-bottom:6px;padding-bottom:4px;gap:6px}
+  ${P} #report .rh h1{font-size:18px;line-height:1.2}
+  ${P} #report .rh .rd{font-size:12px;margin-top:0}
+  ${P} #report .pill{font-size:10px;padding:1px 8px}
+  ${P} #report .ms{padding:5px 8px;margin-bottom:6px;border-radius:8px}
+  ${P} #report .ms h2{font-size:11px;margin-bottom:3px}
+  ${P} #report .ms-g{grid-template-columns:repeat(4,minmax(0,1fr));gap:4px 8px}
+  ${P} #report .mt{font-size:10px}
+  ${P} #report .badge{font-size:10px;padding:0 6px}
+  ${P} #report .cols{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  ${P} #report .col{gap:6px}
+  ${P} #report .card{box-shadow:none!important;padding:5px 8px;border:1px solid #cfd8d2;border-radius:8px;break-inside:avoid}
+  ${P} #report .card h3{font-size:12px;margin:0}
+  ${P} #report .card .mb-2{margin-bottom:2px}
+  ${P} #report .rrow{font-size:11px;line-height:1.3;padding:1px 0}`;
+  const st=document.createElement('style');
+  st.textContent='@media print{'+R('body')+'}'+R('body.pm');
+  document.head.appendChild(st);
+  const mm=v=>v*96/25.4;
+  function fit(){
+    const el=document.getElementById('report'); if(!el)return;
+    document.body.classList.add('pm');
+    el.style.zoom='';el.style.width='';
+    const W=mm(194),H=mm(277);
+    el.style.width=W+'px';
+    const h=el.offsetHeight;
+    const z=Math.max(0.5,Math.min(1,H/h));
+    if(z<1){el.style.zoom=z;el.style.width=(W/z)+'px'}
+  }
+  function unfit(){
+    document.body.classList.remove('pm');
+    const el=document.getElementById('report');
+    if(el){el.style.zoom='';el.style.width=''}
+  }
+  window.addEventListener('beforeprint',fit);
+  window.addEventListener('afterprint',unfit);
+})();
+
 /* ---------- Yedekle / Yükle ---------- */
 function exportData(){
   const payload={app:'mutfak-rapor',version:1,exportedAt:new Date().toISOString(),recipes,days};
