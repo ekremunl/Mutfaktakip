@@ -223,7 +223,6 @@ function viewReport(){
     <div>
       <div class="text-xs font-bold tracking-widest text-leaf">GÜNLÜK RAPOR</div>
       <h1 class="text-3xl sm:text-4xl font-extrabold leading-tight">Günlük Tüketim Raporu</h1>
-      <div class="rd text-sm text-ink/70 mt-1">Öğle: <b>${d.lunch||0}</b> kişi · Akşam: <b>${d.dinner||0}</b> kişi</div>
     </div>
     <div class="sm:text-right">
       <div class="rd text-lg font-bold">${fmtDate(date)}</div>
@@ -246,11 +245,9 @@ function menuSummary(){
   const d=getDay();
   const cols=MEALS.map(([k,l])=>{
     const names=(d.meals[k]||[]).map(id=>recipes.find(r=>r.id===id)).filter(Boolean).map(r=>r.name);
-    const who=persons(k);
     return `<div class="min-w-0">
       <div class="flex items-baseline justify-between gap-2 mb-1">
         <span class="mt text-[11px] font-extrabold tracking-wide uppercase text-leaf">${l.replace(' Yemeği','')}</span>
-        ${k==='ogle'||k==='aksam'?`<span class="text-[10px] text-ink/50">${who} kişi</span>`:''}
       </div>
       <div class="flex flex-wrap gap-1">
         ${names.length?names.map(n=>`<span class="badge rounded-full bg-sand border border-[#cfd8d2] px-2 py-0.5 text-xs font-semibold leading-tight">${esc(n)}</span>`).join(''):'<span class="text-xs text-ink/40">—</span>'}
