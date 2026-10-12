@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mutfak Günlük Rapor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config={theme:{extend:{colors:{ink:'#1c2b2a',paper:'#f2f4f1',leaf:'#0f6b5c',leafdk:'#0a4d42',sand:'#e3e8e2',amber2:'#b7791f'},fontFamily:{sans:['"Bricolage Grotesque"','system-ui','Segoe UI','sans-serif']}}}}
+</script>
+<style>
+body{background:#f2f4f1;color:#1c2b2a}
+input,select{outline:none}
+input:focus,select:focus{box-shadow:0 0 0 2px #0f6b5c55;border-color:#0f6b5c}
+.cell{background:transparent;border:1px solid transparent;border-radius:6px;padding:4px 6px;width:100%}
+.cell:hover{border-color:#cfd8d2;background:#fff}
+select.cell{appearance:none;-webkit-appearance:none}
+.fld{background:#fff;border:1px solid #cfd8d2;border-radius:8px;padding:7px 10px;width:100%}
+@media print{
+  body{background:#fff}
+  .cell{border:0!important;background:transparent!important;padding:2px 0}
+  .card{break-inside:avoid;box-shadow:none!important}
+  @page{margin:14mm}
+}
+</style>
+</head>
+<body class="font-sans min-h-screen">
+<div id="app" class="max-w-6xl mx-auto px-4 py-5"></div>
+
+<script>
+/* ---------- Veri ---------- */
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const uid=()=>Math.random().toString(36).slice(2,9);
+const load=(k,d)=>{try{const v=JSON.parse(localStorage.getItem(k));return v??d}catch{return d}};
+const save=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){alert('Veri kaydedilemedi: '+e.message)}};
+
+const MEALS=[['kahvalti','Kahvaltı'],['ogle','Öğle Yemeği'],['aksam','Akşam Yemeği'],['ara','Ara Öğün']];
+const CARDS=[...MEALS,['firin','Fırın Ürünleri'],['direkt','Doğrudan Tüketim']];
+const DEF_BASIS={kahvalti:'lunch',ogle:'lunch',aksam:'dinner',ara:'lunch'};
+const RUNITS=['g','ml','adet'];
+const UNITS=['g','kg','ml','L','adet','paket','kutu','dilim'];
+const CATS=['Çorba','Ana Yemek','Pilav/Makarna','Salata','Tatlı','Kahvaltılık','Ara Öğün','Diğer'];
+
+const seed=[
+ {id:uid(),name:'Kırmızı Mercimek Çorbası',cat:'Çorba',ings:[{name:'Kırmızı mercimek',amt:40,unit:'g'},{name:'Un',amt:6,unit:'g'},{name:'Salça',amt:20,unit:'g'}]},
+ {id:uid(),name:'Kıymalı Makarna',cat:'Pilav/Makarna',ings:[{name:'Makarna',amt:80,unit:'g'},{name:'Dana kıyma',amt:35,unit:'g'}]},
+ {id:uid(),name:'Haşlanmış Yumurta',cat:'Kahvaltılık',ings:[{name:'Yumurta',amt:1,unit:'adet'}]}
+];
+let recipes=load('kt_recipes',null)||seed;
+let days=load('kt_days',{});
+let tab='menu', editing=null, draft=null, filter='Hepsi';
+const iso=d=>new Date(d.getTime()-d.getTimezoneOffset()*6e4).toISOString().slice(0,10);
+let date=iso(new Date());
+const saveR=()=>save('kt_recipes',recipes), saveD=()=>save('kt_days',days);
+
+function getDay(){
+  if(!days[date]) days[date]={lunch:0,dinner:0,basis:{...DEF_BASIS},meals:{kahvalti:[],ogle:[],aksam:[],ara:[]},firin:[],direkt:[],report:{}};
+  const d=days[date]; d.report=d.report||{}; d.firin=d.firin||[]; d.direkt=d.direkt||[];
+  return d;
+}
+
+/* ---------- Hesaplama ---------- */
+function norm(l){
+  let q=+l.qty||0,u=l.unit;
+  if(u==='g'&&q>=1000){q/=1000;u='kg'}
+  else if(u==='ml'&&q>=1000){q/=1000;u='L'}
+  return {name:l.name,qty:Math.round(q*100)/100,unit:u};
+}
+function persons(key){const d=getDay();return d.basis[key]==='dinner'?+d.dinner||0:+d.lunch||0}
+function auto(key){
+  const d=getDay();
+  if(key==='firin'||key==='direkt') return d[key].map(x=>norm({name:x.name,qty:x.amt,unit:x.unit}));
+  const n=persons(key),map={};
+  (d.meals[key]||[]).forEach(id=>{
+    const r=recipes.find(r=>r.id===id); if(!r) return;
+    r.ings.forEach(i=>{
+      const k=i.name.trim().toLowerCase()+'|'+i.unit;
+      map[k]=map[k]||{name:i.name,qty:0,unit:i.unit};
+      map[k].qty+=(+i.amt||0)*n;
+    });
+  });
+  return Object.values(map).map(norm);
+}
+const lines=key=>getDay().report[key]||auto(key);
+function ensure(key){const d=getDay();if(!d.report[key])d.report[key]=auto(key);return d.report[key]}
+
+/* ---------- Ortak ---------- */
+const opts=(list,sel)=>list.map(o=>`<option ${o===sel?'selected':''}>${esc(o)}</option>`).join('');
+const fmtDate=s=>new Date(s+'T12:00:00').toLocaleDateString('tr-TR',{day:'numeric',month:'long',year:'numeric',weekday:'long'});
+function go(t){tab=t;render()}
+function setDate(v){if(v){date=v;render()}}
+const btn='px-3 py-1.5 rounded-lg text-sm font-semibold transition';
+const btnP=btn+' bg-leaf text-white hover:bg-leafdk';
+const btnG=btn+' border border-[#cfd8d2] bg-white hover:bg-sand';
+
+function render(){
+  const tabs=[['menu','Günlük menü'],['report','Rapor'],['recipes','Reçete havuzu']];
+  $('#app').innerHTML=`
+  <header class="print:hidden flex flex-wrap items-center justify-between gap-3 mb-5">
+    <div class="flex gap-1 bg-sand rounded-xl p-1">
+      ${tabs.map(([k,l])=>`<button onclick="go('${k}')" class="${btn} ${tab===k?'bg-white shadow-sm text-leaf':'text-ink/70 hover:text-ink'}">${l}</button>`).join('')}
+    </div>
+    ${tab!=='recipes'?`<label class="flex items-center gap-2 text-sm font-semibold">Tarih
+      <input type="date" value="${date}" onchange="setDate(this.value)" class="fld !w-auto"></label>`:''}
+  </header>
+  ${tab==='menu'?viewMenu():tab==='report'?viewReport():viewRecipes()}`;
+}
+
+/* ---------- Günlük menü ---------- */
+function viewMenu(){
+  const d=getDay();
+  const grouped=[...new Set(recipes.map(r=>r.cat))].sort();
+  const sel=key=>`<select id="sel-${key}" class="fld"><option value="">Reçete seç…</option>
+    ${grouped.map(c=>`<optgroup label="${esc(c)}">${recipes.filter(r=>r.cat===c).map(r=>`<option value="${r.id}">${esc(r.name)}</option>`).join('')}</optgroup>`).join('')}</select>`;
+  return `
+  <section class="grid sm:grid-cols-2 gap-4 mb-4">
+    ${[['lunch','Öğle kişi sayısı'],['dinner','Akşam kişi sayısı']].map(([k,l])=>`
+    <label class="card bg-white rounded-2xl p-4 shadow-sm block">
+      <span class="text-sm font-semibold text-ink/70">${l}</span>
+      <input type="number" min="0" value="${d[k]||''}" placeholder="0" onchange="setCount('${k}',this.value)" class="fld mt-1 !text-2xl font-extrabold">
+    </label>`).join('')}
+  </section>
+  <section class="grid md:grid-cols-2 gap-4">
+    ${MEALS.map(([key,label])=>`
+    <div class="card bg-white rounded-2xl p-4 shadow-sm">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-extrabold text-lg">${label}</h3>
+        <select onchange="setBasis('${key}',this.value)" class="fld !w-auto !py-1 text-sm">
+          <option value="lunch" ${d.basis[key]==='lunch'?'selected':''}>Öğle sayısı (${d.lunch||0})</option>
+          <option value="dinner" ${d.basis[key]==='dinner'?'selected':''}>Akşam sayısı (${d.dinner||0})</option>
+        </select>
+      </div>
+      <div class="flex gap-2 mb-3">${sel(key)}<button class="${btnP}" onclick="addMeal('${key}')">Ekle</button></div>
+      <ul class="space-y-1">
+        ${(d.meals[key]||[]).map(id=>{const r=recipes.find(r=>r.id===id);return r?`
+        <li class="flex items-center justify-between bg-paper rounded-lg px-3 py-1.5 text-sm">
+          <span>${esc(r.name)} <span class="text-ink/50">· ${esc(r.cat)}</span></span>
+          <button onclick="delMeal('${key}','${id}')" class="text-red-700 font-bold px-1" aria-label="Kaldır">✕</button></li>`:''}).join('')||'<li class="text-sm text-ink/50">Henüz reçete seçilmedi.</li>'}
+      </ul>
+    </div>`).join('')}
+    ${[['firin','Fırın Ürünleri','Ekmek, simit, poğaça…','adet'],['direkt','Doğrudan Tüketim Ürünleri','Meyve suyu, süt…','ml']].map(([k,l,ph,du])=>`
+    <div class="card bg-white rounded-2xl p-4 shadow-sm">
+      <h3 class="font-extrabold text-lg mb-3">${l}</h3>
+      <div class="flex gap-2 mb-3">
+        <input id="${k}-n" class="fld" placeholder="${ph}">
+        <input id="${k}-a" type="number" min="0" step="any" class="fld !w-24" placeholder="Miktar">
+        <select id="${k}-u" class="fld !w-24">${opts(UNITS,du)}</select>
+        <button class="${btnP}" onclick="addRow('${k}')">Ekle</button>
+      </div>
+      <ul class="space-y-1">
+        ${d[k].map((x,i)=>`<li class="flex items-center justify-between bg-paper rounded-lg px-3 py-1.5 text-sm">
+          <span>${esc(x.name)} <b>${esc(x.amt)} ${esc(x.unit)}</b></span>
+          <button onclick="delRow('${k}',${i})" class="text-red-700 font-bold px-1" aria-label="Sil">✕</button></li>`).join('')||'<li class="text-sm text-ink/50">Henüz ürün girilmedi.</li>'}
+      </ul>
+    </div>`).join('')}
+  </section>
+  <div class="mt-5 text-right print:hidden"><button class="${btnP}" onclick="go('report')">Raporu gör</button></div>`;
+}
+function setCount(k,v){getDay()[k]=Math.max(0,parseInt(v)||0);saveD();render()}
+function setBasis(k,v){getDay().basis[k]=v;saveD();render()}
+function addMeal(k){const v=$('#sel-'+k).value;if(!v)return;const a=getDay().meals[k];if(!a.includes(v))a.push(v);saveD();render()}
+function delMeal(k,id){const d=getDay();d.meals[k]=d.meals[k].filter(x=>x!==id);saveD();render()}
+function addRow(k){
+  const n=$('#'+k+'-n').value.trim(),a=parseFloat($('#'+k+'-a').value),u=$('#'+k+'-u').value;
+  if(!n||!(a>0)){alert('Ürün adı ve 0\'dan büyük bir miktar girin.');return}
+  getDay()[k].push({name:n,amt:a,unit:u});saveD();render();
+}
+function delRow(k,i){getDay()[k].splice(i,1);saveD();render()}
+
+/* ---------- Rapor ---------- */
+function viewReport(){
+  const d=getDay();
+  const data=CARDS.map(([k,l])=>({k,l,rows:lines(k),edited:!!d.report[k]}));
+  const total=data.reduce((s,c)=>s+c.rows.length,0);
+  const active=data.filter(c=>c.rows.length).length;
+  const visible=data.filter(c=>c.k!=='direkt'||c.rows.length||c.edited);
+  return `
+  <div class="flex flex-wrap items-start justify-between gap-4 mb-5 border-b-2 border-ink pb-4">
+    <div>
+      <div class="text-xs font-bold tracking-widest text-leaf">GÜNLÜK RAPOR</div>
+      <h1 class="text-3xl sm:text-4xl font-extrabold leading-tight">Günlük Tüketim Raporu</h1>
+      <div class="text-sm text-ink/70 mt-1">Öğle: <b>${d.lunch||0}</b> kişi · Akşam: <b>${d.dinner||0}</b> kişi</div>
+    </div>
+    <div class="sm:text-right">
+      <div class="text-lg font-bold">${fmtDate(date)}</div>
+      <div class="flex sm:justify-end gap-2 mt-2">
+        <span class="rounded-full bg-leaf text-white text-xs font-semibold px-3 py-1">Toplam ${total} kayıt</span>
+        <span class="rounded-full bg-sand text-xs font-semibold px-3 py-1">${active} aktif kategori</span>
+      </div>
+      <button onclick="window.print()" class="${btnP} mt-3 print:hidden">Yazdır / PDF indir</button>
+    </div>
+  </div>
+  <p class="print:hidden text-sm text-ink/60 mb-4">Miktarlar otomatik hesaplanır. Ad, miktar ve birimi doğrudan düzenleyebilir, satır silebilir veya ekleyebilirsiniz.</p>
+  <div class="grid md:grid-cols-2 gap-4">
+    ${visible.map(c=>`
+    <section class="card bg-white rounded-2xl p-4 shadow-sm">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="font-extrabold text-lg">${c.l} <span class="text-sm font-semibold text-ink/50">${c.rows.length} kalem</span></h3>
+        ${c.edited?`<button onclick="resetCard('${c.k}')" class="print:hidden text-xs font-semibold text-amber2 underline" title="Menüden yeniden hesapla">Elle düzenlendi · Sıfırla</button>`:''}
+      </div>
+      <div class="divide-y divide-sand">
+        ${c.rows.map((r,i)=>`
+        <div class="flex items-center gap-1 py-1">
+          <input class="cell flex-1" value="${esc(r.name)}" placeholder="Malzeme" onchange="setLine('${c.k}',${i},'name',this.value)">
+          <input class="cell !w-20 text-right font-bold" type="number" step="any" min="0" value="${r.qty}" onchange="setLine('${c.k}',${i},'qty',this.value)">
+          <select class="cell !w-16" onchange="setLine('${c.k}',${i},'unit',this.value)">${opts(UNITS.includes(r.unit)?UNITS:[...UNITS,r.unit],r.unit)}</select>
+          <button onclick="delLine('${c.k}',${i})" class="print:hidden text-red-700 font-bold px-1" aria-label="Satırı sil">✕</button>
+        </div>`).join('')||'<div class="py-3 text-sm text-ink/50">Bu kategoride kayıt yok.</div>'}
+      </div>
+      <button onclick="addLine('${c.k}')" class="print:hidden mt-2 text-sm font-semibold text-leaf hover:underline">+ Satır ekle</button>
+    </section>`).join('')}
+  </div>`;
+}
+function setLine(k,i,f,v){const l=ensure(k);l[i][f]=f==='qty'?Math.max(0,parseFloat(v)||0):v;saveD();render()}
+function delLine(k,i){ensure(k).splice(i,1);saveD();render()}
+function addLine(k){ensure(k).push({name:'',qty:0,unit:'adet'});saveD();render()}
+function resetCard(k){if(confirm('Elle yapılan değişiklikler silinip menüden yeniden hesaplanacak. Devam edilsin mi?')){delete getDay().report[k];saveD();render()}}
+
+/* ---------- Reçete havuzu ---------- */
+function newDraft(r){return r?JSON.parse(JSON.stringify(r)):{id:null,name:'',cat:'Ana Yemek',ings:[{name:'',amt:'',unit:'g'}]}}
+function syncDraft(){
+  if(!draft||!$('#r-name'))return;
+  draft.name=$('#r-name').value;draft.cat=$('#r-cat').value;
+  draft.ings=[...document.querySelectorAll('.ing')].map(e=>({name:e.querySelector('.in').value,amt:e.querySelector('.ia').value,unit:e.querySelector('.iu').value}));
+}
+function viewRecipes(){
+  if(!draft)draft=newDraft();
+  const cats=[...new Set([...CATS,...recipes.map(r=>r.cat)])];
+  const shown=recipes.filter(r=>filter==='Hepsi'||r.cat===filter);
+  return `
+  <div class="grid lg:grid-cols-5 gap-4">
+    <section class="lg:col-span-2 card bg-white rounded-2xl p-4 shadow-sm self-start">
+      <h2 class="font-extrabold text-lg mb-1">${draft.id?'Reçeteyi düzenle':'Yeni reçete'}</h2>
+      <p class="text-sm text-ink/60 mb-3">Malzemeleri 1 kişilik miktar üzerinden girin.</p>
+      <input id="r-name" class="fld mb-2" placeholder="Yemek adı" value="${esc(draft.name)}">
+      <input id="r-cat" list="cats" class="fld mb-3" placeholder="Kategori" value="${esc(draft.cat)}">
+      <datalist id="cats">${cats.map(c=>`<option value="${esc(c)}">`).join('')}</datalist>
+      <div class="text-xs font-semibold text-ink/60 mb-1">Malzeme · 1 kişilik miktar</div>
+      <div class="space-y-2">
+        ${draft.ings.map((g,i)=>`<div class="ing flex gap-1">
+          <input class="in fld" placeholder="Malzeme" value="${esc(g.name)}">
+          <input class="ia fld !w-20" type="number" min="0" step="any" placeholder="Miktar" value="${esc(g.amt)}">
+          <select class="iu fld !w-20">${opts(RUNITS,g.unit)}</select>
+          <button onclick="ingDel(${i})" class="text-red-700 font-bold px-1" aria-label="Malzemeyi sil">✕</button></div>`).join('')}
+      </div>
+      <button onclick="ingAdd()" class="mt-2 text-sm font-semibold text-leaf hover:underline">+ Malzeme ekle</button>
+      <div class="flex gap-2 mt-4">
+        <button class="${btnP}" onclick="saveRecipe()">${draft.id?'Değişiklikleri kaydet':'Reçeteyi kaydet'}</button>
+        ${draft.id?`<button class="${btnG}" onclick="draft=newDraft();render()">Vazgeç</button>`:''}
+      </div>
+    </section>
+    <section class="lg:col-span-3">
+      <div class="flex flex-wrap gap-1 mb-3">
+        ${['Hepsi',...cats.filter(c=>recipes.some(r=>r.cat===c))].map(c=>`<button onclick="filter='${esc(c).replace(/'/g,"\\'")}';render()" class="${btn} ${filter===c?'bg-ink text-white':'bg-white border border-[#cfd8d2]'}">${esc(c)}</button>`).join('')}
+      </div>
+      <div class="space-y-3">
+        ${shown.map(r=>`
+        <article class="card bg-white rounded-2xl p-4 shadow-sm">
+          <div class="flex items-start justify-between gap-2">
+            <div><h3 class="font-extrabold">${esc(r.name)}</h3><div class="text-xs text-ink/60">${esc(r.cat)} · 1 porsiyon</div></div>
+            <div class="flex gap-1 shrink-0">
+              <button class="${btnG}" onclick="editRecipe('${r.id}')">Düzenle</button>
+              <button class="${btnG} !text-red-700" onclick="delRecipe('${r.id}')">Sil</button>
+            </div>
+          </div>
+          <ul class="mt-2 flex flex-wrap gap-1.5">
+            ${r.ings.map(i=>`<li class="bg-paper rounded-full px-3 py-1 text-sm">${esc(i.name)} <b>${esc(i.amt)} ${esc(i.unit)}</b></li>`).join('')}
+          </ul>
+        </article>`).join('')||'<div class="text-ink/50 text-sm">Bu kategoride reçete yok.</div>'}
+      </div>
+    </section>
+  </div>`;
+}
+function ingAdd(){syncDraft();draft.ings.push({name:'',amt:'',unit:'g'});render()}
+function ingDel(i){syncDraft();draft.ings.splice(i,1);if(!draft.ings.length)draft.ings.push({name:'',amt:'',unit:'g'});render()}
+function saveRecipe(){
+  syncDraft();
+  const name=draft.name.trim(),cat=draft.cat.trim()||'Diğer';
+  const ings=draft.ings.filter(g=>g.name.trim()&&parseFloat(g.amt)>0).map(g=>({name:g.name.trim(),amt:parseFloat(g.amt),unit:g.unit}));
+  if(!name){alert('Yemek adı girin.');return}
+  if(!ings.length){alert('En az bir malzeme ve miktar girin.');return}
+  if(draft.id){const r=recipes.find(r=>r.id===draft.id);Object.assign(r,{name,cat,ings})}
+  else recipes.push({id:uid(),name,cat,ings});
+  saveR();draft=newDraft();render();
+}
+function editRecipe(id){draft=newDraft(recipes.find(r=>r.id===id));render();window.scrollTo({top:0,behavior:'smooth'})}
+function delRecipe(id){
+  if(!confirm('Reçete silinsin mi? Seçili menülerden de kaldırılır.'))return;
+  recipes=recipes.filter(r=>r.id!==id);
+  Object.values(days).forEach(d=>MEALS.forEach(([k])=>{d.meals[k]=(d.meals[k]||[]).filter(x=>x!==id)}));
+  saveR();saveD();render();
+}
+render();
+</script>
+</body>
+</html>
